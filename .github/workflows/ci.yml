@@ -12,10 +12,25 @@ concurrency:
 
 env:
   TURBO_TELEMETRY_DISABLED: 1
+  DATABASE_URL: postgresql://numismatist:numismatist_ci@localhost:5432/numismatist_ci
 
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: numismatist
+          POSTGRES_PASSWORD: numismatist_ci
+          POSTGRES_DB: numismatist_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -39,6 +54,9 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: Apply database migrations
+        run: pnpm --filter @numismatist/db exec prisma migrate deploy
 
       - name: Test
         run: pnpm test

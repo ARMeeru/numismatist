@@ -13,6 +13,7 @@ Numismatist.app — a museum-style digital coin archive and showcase. Collectors
 - **App:** Next.js (App Router, React 19) — SSR public site **and** API route handlers in one app (`apps/web`).
 - **DB:** PostgreSQL via **Prisma**.
 - **Auth:** Better Auth (email+password + email verification gate + Google OAuth + password reset).
+- **Note on versions:** pin to the latest stable of the **previous** major (e.g. Prisma 6.x, not 7.x) when a tool's newest major just shipped and isn't yet well-represented in training data/docs. Check before bumping; don't silently float to a brand-new major.
 - **Images:** `sharp` (libvips) in a separate worker (`apps/image-service`); EXIF/GPS stripping, resize, thumbnails, HEIC conversion.
 - **Storage:** Cloudflare R2 (S3-compatible). **Search:** Postgres FTS + `pg_trgm`.
 - **Tests:** Vitest (unit), Playwright (e2e). **Lint/format:** ESLint + Prettier.
@@ -30,6 +31,7 @@ apps/
   admin/           moderation tooling (may live inside web/ early on)
 packages/
   contracts/   Shared Zod schemas + types — SINGLE SOURCE OF TRUTH for the §36 data model
+  db/          Prisma schema, migrations, and typed client (§11 + §36 entities)
   ui/          Museum-theme design system
   config/      Shared ESLint/Prettier/tsconfig
 seed/          Launch seed content + scripts
@@ -39,6 +41,8 @@ infra/         Deploy config
 ## The contracts rule (important)
 
 Shared domain types and validation — visibility enum, coin image types, the year/date model (§36.2), validation constraints, publish-gate rules — live **once** in `packages/contracts` as Zod schemas with inferred TS types. The Next app and the image worker import from there. Never redefine these shapes locally or let them drift.
+
+`packages/db` holds the Prisma schema and is the source of truth for persisted shape. Its enums (`Visibility`, `CoinImageType`, `DatePrecision`, ...) are kept in sync **by hand** with the matching `packages/contracts` Zod enums — Prisma can't import TS values into `schema.prisma`. When you change one, change both, and say so in the PR.
 
 ## Workflow and conventions
 
@@ -71,4 +75,31 @@ pnpm test             # turbo run test (vitest)
 pnpm build            # turbo run build
 ```
 
-CI (`.github/workflows/ci.yml`) runs install → format:check → lint → typecheck → test on every PR to `main`. All must pass before merge. App/db scripts (dev server, migrations) are added when those packages land.
+CI (`.github/workflows/ci.yml`) runs install → format:check → lint → typecheck → `prisma migrate deploy` (against a Postgres service container) → test on every PR to `main`. All must pass before merge.
+
+Database-specific commands (run from repo root):
+
+```bash
+pnpm --filter @numismatist/db migrate:dev      # create + apply a new migration locally
+pnpm --filter @numismatist/db migrate:deploy   # apply existing migrations, no new ones (what CI runs)
+```
+
+## Local database
+
+Local dev uses **native Homebrew Postgres**, not Docker (none is set up on the dev machine, and a single local Postgres instance is simpler than maintaining a Compose file solo). Railway Postgres is the staging/prod target, used once there's something worth deploying — not for local dev.
+
+One-time setup (macOS):
+
+```bash
+brew install postgresql@17
+brew services start postgresql@17   # runs as a background service, survives reboots
+
+# Dedicated app role + database (not the OS superuser role):
+createuser numismatist --pwprompt --createdb   # password: numismatist_dev (dev only)
+createdb -O numismatist numismatist_dev
+psql -d numismatist_dev -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
+```
+
+Then copy `.env.example` to `.env` at the repo root **and** inside `packages/db/` — Prisma's CLI only reads `.env` from the package containing `schema.prisma`. The default `DATABASE_URL` already points at `numismatist_dev`. Run `pnpm --filter @numismatist/db migrate:dev` to apply migrations.
+
+`brew services list` shows whether Postgres is running; `brew services stop postgresql@17` stops it. Schema is managed entirely through Prisma migrations — never hand-edit the local DB schema. CI does not use Homebrew Postgres; it spins up a disposable `postgres:17` service container per run (see `ci.yml`).

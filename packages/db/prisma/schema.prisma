@@ -1,0 +1,377 @@
+// Prisma schema for the Numismatist.app data model.
+//
+// Source of truth: PRD §11 (Data Model) and §36 (Pre-Build Decisions). Enum
+// values are kept in sync by hand with packages/contracts (Zod schemas don't
+// generate Prisma enums, and vice versa) — when one changes, change both.
+//
+// Auth fields on User (passwordHash, authProvider, providerId) are the §36.1
+// shape as specified in the PRD. When Better Auth is wired in (a later PR),
+// its Prisma adapter may want its own Account/Session/Verification models —
+// expect to reconcile this shape with that adapter at that time.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+// Mirrors packages/contracts `visibilitySchema` (PRD §8.1).
+enum Visibility {
+  private
+  unlisted
+  public
+}
+
+// Mirrors packages/contracts `coinImageTypeSchema` (PRD §11.4). No `primary` —
+// the primary image is a designation via Coin.primaryImageId (§11.3, §11.5).
+enum CoinImageType {
+  obverse
+  reverse
+  edge
+  detail
+  slab
+  other
+}
+
+// Mirrors packages/contracts `datePrecisionSchema` (PRD §36.2).
+enum DatePrecision {
+  exact
+  circa
+  range
+  unknown
+}
+
+// §36.1: password accounts vs. provider-verified OAuth accounts.
+enum AuthProvider {
+  password
+  google
+}
+
+// §11.11 / §12.12: shared by ContentReport.targetType and SlugRedirect.contentType.
+enum ContentKind {
+  profile
+  coin
+  collection
+}
+
+// §11.11
+enum ReportStatus {
+  new
+  reviewing
+  resolved
+  dismissed
+}
+
+// ---------------------------------------------------------------------------
+// User (§11.1, §36.1, §36.4)
+// ---------------------------------------------------------------------------
+
+model User {
+  id     String @id @default(cuid())
+  email  String @unique
+  emailVerifiedAt DateTime?
+
+  // §36.1 auth fields. passwordHash is null for OAuth-only accounts.
+  passwordHash String?
+  authProvider AuthProvider @default(password)
+  providerId   String?
+  lastLoginAt  DateTime?
+
+  displayName String
+  username    String  @unique
+  bio         String?
+  broadLocation String?
+  profileImage  String?
+  publicProfileEnabled Boolean @default(true)
+
+  // §36.4: soft-delete grace window before hard purge.
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  coins                  Coin[]
+  collections            Collection[]
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+  contentReports          ContentReport[]
+  slugRedirects           SlugRedirect[]
+
+  @@index([deletedAt])
+}
+
+// §36.1 supporting token store: email verification.
+model EmailVerificationToken {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  email      String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+}
+
+// §36.1 supporting token store: password reset.
+model PasswordResetToken {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Coin (§11.2, §36.2)
+// ---------------------------------------------------------------------------
+
+model Coin {
+  id      String @id @default(cuid())
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  title String
+  slug  String
+
+  primaryImageId String?     @unique
+  primaryImage   CoinImage?  @relation("CoinPrimaryImage", fields: [primaryImageId], references: [id], onDelete: SetNull)
+
+  countryRegion String?
+  rulerIssuer   String?
+
+  // §36.2 year/date model.
+  dateDisplay   String?
+  yearStart     Int?
+  yearEnd       Int?
+  datePrecision DatePrecision @default(unknown)
+
+  denomination String?
+  mint         String?
+  material     String?
+  weight       String?
+  diameter     String?
+  grade        String?
+  gradingService      String?
+  certificationNumber String?
+  varietySubtype      String?
+
+  description String?
+
+  visibility     Visibility @default(private)
+  unlistedToken  String?    @unique
+
+  deletedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  images             CoinImage[] @relation("CoinImages")
+  catalogReferences  CatalogReference[]
+  provenance         Provenance?
+  tags               CoinTag[]
+  collectionEntries  CollectionCoin[]
+
+  @@unique([ownerId, slug])
+  @@index([ownerId])
+  @@index([visibility])
+  @@index([deletedAt])
+  @@index([yearStart, yearEnd])
+}
+
+// ---------------------------------------------------------------------------
+// Coin Image (§11.3–11.5)
+// ---------------------------------------------------------------------------
+
+model CoinImage {
+  id     String @id @default(cuid())
+  coinId String
+  coin   Coin   @relation("CoinImages", fields: [coinId], references: [id], onDelete: Cascade)
+
+  imageUrl         String
+  thumbnailUrl     String
+  originalImageUrl String?
+
+  type     CoinImageType
+  altText  String?
+  sortOrder Int
+
+  width    Int?
+  height   Int?
+  fileSize Int?
+  mimeType String?
+
+  createdAt DateTime @default(now())
+
+  // Inverse side of Coin.primaryImageId (§11.5 primary image designation).
+  primaryForCoin Coin? @relation("CoinPrimaryImage")
+
+  @@index([coinId, sortOrder])
+}
+
+// ---------------------------------------------------------------------------
+// Catalog Reference (§11.6)
+// ---------------------------------------------------------------------------
+
+model CatalogReference {
+  id     String @id @default(cuid())
+  coinId String
+  coin   Coin   @relation(fields: [coinId], references: [id], onDelete: Cascade)
+
+  system String
+  number String
+  notes  String?
+
+  @@index([coinId])
+}
+
+// ---------------------------------------------------------------------------
+// Provenance (§11.7) — private by default, one record per coin.
+// ---------------------------------------------------------------------------
+
+model Provenance {
+  id     String @id @default(cuid())
+  coinId String @unique
+  coin   Coin   @relation(fields: [coinId], references: [id], onDelete: Cascade)
+
+  acquisitionDate   DateTime?
+  acquisitionSource String?
+  acquisitionPrice  Decimal? @db.Decimal(12, 2)
+  previousOwner     String?
+  notes             String?
+}
+
+// ---------------------------------------------------------------------------
+// Collection (§11.8–11.10)
+// ---------------------------------------------------------------------------
+
+model Collection {
+  id      String @id @default(cuid())
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  title       String
+  slug        String
+  description String?
+
+  coverImageId String?
+
+  visibility    Visibility @default(private)
+  unlistedToken String?    @unique
+
+  deletedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  coins CollectionCoin[]
+  tags  CollectionTag[]
+
+  @@unique([ownerId, slug])
+  @@index([ownerId])
+  @@index([visibility])
+  @@index([deletedAt])
+}
+
+// §11.9: ordered membership, manual sort order with added-date fallback (§11.10).
+model CollectionCoin {
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  coinId       String
+  coin         Coin       @relation(fields: [coinId], references: [id], onDelete: Cascade)
+
+  sortOrder Int
+  addedAt   DateTime @default(now())
+
+  @@id([collectionId, coinId])
+  @@index([coinId])
+  @@index([collectionId, sortOrder])
+}
+
+// ---------------------------------------------------------------------------
+// Tags (§17.2 search, §17.1 popular tags) — normalized for counting/filtering.
+// ---------------------------------------------------------------------------
+
+model Tag {
+  id   String @id @default(cuid())
+  name String @unique
+
+  coins       CoinTag[]
+  collections CollectionTag[]
+}
+
+model CoinTag {
+  coinId String
+  coin   Coin   @relation(fields: [coinId], references: [id], onDelete: Cascade)
+  tagId  String
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([coinId, tagId])
+  @@index([tagId])
+}
+
+model CollectionTag {
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  tagId        String
+  tag          Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, tagId])
+  @@index([tagId])
+}
+
+// ---------------------------------------------------------------------------
+// Content Report (§11.11, §23)
+// ---------------------------------------------------------------------------
+
+model ContentReport {
+  id String @id @default(cuid())
+
+  targetType ContentKind
+  targetId   String
+
+  reporterUserId String?
+  reporterUser   User?   @relation(fields: [reporterUserId], references: [id], onDelete: SetNull)
+  reporterEmail  String?
+
+  reason  String
+  details String?
+  status  ReportStatus @default(new)
+
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([targetType, targetId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Slug Redirect (§11.12, §12.4, §12.6)
+// ---------------------------------------------------------------------------
+
+model SlugRedirect {
+  id String @id @default(cuid())
+
+  ownerId String?
+  owner   User?   @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
+  contentType ContentKind
+  contentId   String
+
+  oldPath String @unique
+  newPath String
+
+  createdAt DateTime @default(now())
+
+  @@index([contentType, contentId])
+}
