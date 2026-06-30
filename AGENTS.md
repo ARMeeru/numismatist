@@ -58,6 +58,17 @@ Shared domain types and validation — visibility enum, coin image types, the ye
 - Keep secrets out of the repo; use env vars (`.env` is gitignored, provide `.env.example`).
 - Match existing patterns, naming, and file structure. Prefer clarity over cleverness.
 
-## How to run (filled in as the stack lands)
+## How to run
 
-Commands will be documented here once `chore/workspace-setup` merges (install, dev, test, lint, db migrate). Until then, do not assume scripts exist — check `package.json`.
+Requires Node >=22 (see `.nvmrc`) and pnpm (pinned via `packageManager`).
+
+```bash
+pnpm install          # install workspace deps
+pnpm lint             # eslint across the repo
+pnpm format:check     # prettier check (pnpm format to fix)
+pnpm typecheck        # turbo run typecheck (per package)
+pnpm test             # turbo run test (vitest)
+pnpm build            # turbo run build
+```
+
+CI (`.github/workflows/ci.yml`) runs install → format:check → lint → typecheck → test on every PR to `main`. All must pass before merge. App/db scripts (dev server, migrations) are added when those packages land.
