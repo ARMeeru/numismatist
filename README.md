@@ -26,6 +26,15 @@ seed/        Launch seed content and scripts
 infra/       Infrastructure-as-code and deploy config
 ```
 
+## Getting started
+
+Requires Node >=22 (`.nvmrc`) and pnpm.
+
+```bash
+pnpm install
+pnpm lint && pnpm typecheck && pnpm test
+```
+
 ## Status
 
-Greenfield. Stack chosen ([ADR 0001](docs/decisions/0001-tech-stack.md)); workspace scaffolding lands next in `chore/workspace-setup`.
+Greenfield. Stack chosen ([ADR 0001](docs/decisions/0001-tech-stack.md)) and the pnpm/Turborepo workspace + CI are in place. Next: shared `contracts` schemas, then the Next.js app and Prisma data model.

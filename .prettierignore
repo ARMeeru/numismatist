@@ -1,0 +1,8 @@
+node_modules
+dist
+.next
+.turbo
+coverage
+pnpm-lock.yaml
+# Markdown (PRD/ADRs/READMEs) is hand-formatted; don't let Prettier reflow tables.
+**/*.md
