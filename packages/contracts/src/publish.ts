@@ -62,3 +62,15 @@ export function checkCollectionPublishable(
   if (!input.hasCoverImage) missing.push("coverImage");
   return { ok: missing.length === 0, missing };
 }
+
+/**
+ * The §8.6 email-verification gate: unverified users may sign in and save
+ * private coins/collections, but may not publish or share anything publicly
+ * or via an unlisted link. Deliberately independent of Better Auth's own
+ * `requireEmailVerification` flag, which blocks sign-in entirely — a stricter
+ * behavior this product does not want. Call this before allowing a coin or
+ * collection's visibility to become `unlisted` or `public`.
+ */
+export function canUserShare(user: { emailVerified: boolean }): boolean {
+  return user.emailVerified;
+}

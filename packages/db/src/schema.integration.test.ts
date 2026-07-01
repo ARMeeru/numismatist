@@ -12,7 +12,7 @@ async function createUser(suffix: string) {
     data: {
       email: `owner-${suffix}@example.test`,
       username: `owner-${suffix}`,
-      displayName: "Test Owner",
+      name: "Test Owner",
     },
   });
 }
@@ -70,7 +70,7 @@ describe("schema integration", () => {
 
     await expect(
       prisma.user.create({
-        data: { email: user.email, username: `other-${suffix}`, displayName: "Dup Email" },
+        data: { email: user.email, username: `other-${suffix}`, name: "Dup Email" },
       }),
     ).rejects.toThrow();
 
@@ -79,7 +79,7 @@ describe("schema integration", () => {
         data: {
           email: `other-${suffix}@example.test`,
           username: user.username,
-          displayName: "Dup Username",
+          name: "Dup Username",
         },
       }),
     ).rejects.toThrow();

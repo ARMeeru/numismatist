@@ -38,4 +38,4 @@ pnpm lint && pnpm typecheck && pnpm test
 
 ## Status
 
-Stack chosen ([ADR 0001](docs/decisions/0001-tech-stack.md)); workspace, CI, `contracts` schemas, the Prisma data model, and the `apps/web` Next.js scaffold (with a `packages/contracts`/`packages/db`-wired health check at `/api/health`) are all in place. Next: Better Auth integration, then real features.
+Stack chosen ([ADR 0001](docs/decisions/0001-tech-stack.md)); workspace, CI, `contracts` schemas, the Prisma data model, the `apps/web` Next.js scaffold, and Better Auth (email+password, Google OAuth, the §8.6 verification gate) are all wired and working end to end — sign-up, sign-in, and session persistence verified against real Postgres. Next: real coin/collection features.
