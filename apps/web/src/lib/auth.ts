@@ -13,7 +13,29 @@ import { nextCookies } from "better-auth/next-js";
 // are only blocked from publishing public/unlisted content. That gate is
 // enforced at the application layer (checking `user.emailVerified`) wherever
 // visibility is set to public/unlisted, not here.
+// Local dev machines often have common ports (3000, etc.) already taken by
+// unrelated tools, so the dev server should be free to bind to whatever's
+// available rather than fight for one fixed port. Better Auth's origin check
+// normally requires `baseURL` to match the actual running port exactly — the
+// dynamic-host form of `baseURL` (designed for Vercel preview domains) works
+// just as well for "which localhost port am I on this time": it derives the
+// origin from the incoming request and accepts anything matching
+// `allowedHosts`, so no port needs to be pinned or coordinated with `.env`.
+// Production keeps a fixed, real `baseURL` — no wildcard there.
+// `fallback` covers calls with no real HTTP request to derive an origin from
+// (direct `auth.api.*` calls, e.g. from tests or future server actions) — it
+// is never consulted for actual browser traffic, which always has a request.
+const baseURL =
+  process.env.NODE_ENV === "production"
+    ? process.env.BETTER_AUTH_URL
+    : {
+        allowedHosts: ["localhost:*", "127.0.0.1:*"],
+        protocol: "http" as const,
+        fallback: "http://localhost:3000",
+      };
+
 export const auth = betterAuth({
+  baseURL,
   database: prismaAdapter(prisma, { provider: "postgresql" }),
   user: {
     additionalFields: {

@@ -107,6 +107,8 @@ Then copy `.env.example` to `.env` at the repo root, inside `packages/db/`, and 
 
 `brew services list` shows whether Postgres is running; `brew services stop postgresql@17` stops it. Schema is managed entirely through Prisma migrations — never hand-edit the local DB schema. CI does not use Homebrew Postgres; it spins up a disposable `postgres:17` service container per run (see `ci.yml`).
 
-## Local dev server port must match BETTER_AUTH_URL
+## Local dev server can use any port — no coordination needed
 
-Better Auth rejects requests whose origin doesn't match its configured `baseURL` (read from `BETTER_AUTH_URL`) — a mismatch fails with a generic **"Invalid origin"** error on every sign-up/sign-in call, which doesn't obviously point at a port problem. `.claude/launch.json` pins the dev server to port 3000 with `"autoPort": false` specifically for this reason — don't change it to `autoPort: true`. If port 3000 is unavailable locally, update **both** `.claude/launch.json`'s port **and** `apps/web/.env`'s `BETTER_AUTH_URL` to the same alternate port; changing only one reproduces the "Invalid origin" error.
+Local dev machines often have common ports (3000, etc.) already taken by other tools, so don't fight for one fixed port. `.claude/launch.json` uses `"autoPort": true`, and the Next.js dev server itself auto-picks another port if its default is busy.
+
+This works with Better Auth's origin check (which normally requires `baseURL` to exactly match the running port — a mismatch fails with a generic, non-obvious **"Invalid origin"** error) because `apps/web/src/lib/auth.ts` gives `baseURL` a dynamic-host config in non-production environments: `{ allowedHosts: ["localhost:*", "127.0.0.1:*"], protocol: "http" }`. Better Auth derives the origin from the incoming request and accepts any matching host, so no port needs to be pinned or coordinated with `.env`. Production keeps a fixed real `baseURL` from `BETTER_AUTH_URL` — no wildcard there. Don't remove this dynamic-host branch or reintroduce a fixed local `baseURL`; it's what makes arbitrary local ports work.
