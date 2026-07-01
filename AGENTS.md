@@ -10,10 +10,10 @@ Numismatist.app — a museum-style digital coin archive and showcase. Collectors
 
 - **Language:** TypeScript everywhere. No JavaScript source files.
 - **Monorepo:** pnpm workspaces + Turborepo.
-- **App:** Next.js (App Router, React 19) — SSR public site **and** API route handlers in one app (`apps/web`).
+- **App:** Next.js 16 (App Router, React 19), Tailwind CSS v4 — SSR public site **and** API route handlers in one app (`apps/web`). See [apps/web/AGENTS.md](apps/web/AGENTS.md) for Next.js-specific guidance.
 - **DB:** PostgreSQL via **Prisma**.
 - **Auth:** Better Auth (email+password + email verification gate + Google OAuth + password reset).
-- **Note on versions:** pin to the latest stable of the **previous** major (e.g. Prisma 6.x, not 7.x) when a tool's newest major just shipped and isn't yet well-represented in training data/docs. Check before bumping; don't silently float to a brand-new major.
+- **Note on versions:** pin to the latest stable of the **previous** major (e.g. Prisma 6.x, not 7.x) when a tool's newest major just shipped and isn't yet well-represented in training data/docs, or when the ecosystem hasn't caught up yet — e.g. ESLint is pinned to 9.x here because `eslint-plugin-react` (pulled in via `eslint-config-next`) doesn't yet support ESLint 10's rule-context API. Check before bumping; don't silently float to a brand-new major.
 - **Images:** `sharp` (libvips) in a separate worker (`apps/image-service`); EXIF/GPS stripping, resize, thumbnails, HEIC conversion.
 - **Storage:** Cloudflare R2 (S3-compatible). **Search:** Postgres FTS + `pg_trgm`.
 - **Tests:** Vitest (unit), Playwright (e2e). **Lint/format:** ESLint + Prettier.
@@ -73,9 +73,10 @@ pnpm format:check     # prettier check (pnpm format to fix)
 pnpm typecheck        # turbo run typecheck (per package)
 pnpm test             # turbo run test (vitest)
 pnpm build            # turbo run build
+pnpm --filter @numismatist/web dev   # Next.js dev server at localhost:3000
 ```
 
-CI (`.github/workflows/ci.yml`) runs install → format:check → lint → typecheck → `prisma migrate deploy` (against a Postgres service container) → test on every PR to `main`. All must pass before merge.
+CI (`.github/workflows/ci.yml`) runs install → format:check → lint → typecheck → `prisma migrate deploy` (against a Postgres service container) → build → a smoke test that boots the built web app and curls `/api/health` → test, on every PR to `main`. All must pass before merge.
 
 Database-specific commands (run from repo root):
 
@@ -100,6 +101,6 @@ createdb -O numismatist numismatist_dev
 psql -d numismatist_dev -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
 ```
 
-Then copy `.env.example` to `.env` at the repo root **and** inside `packages/db/` — Prisma's CLI only reads `.env` from the package containing `schema.prisma`. The default `DATABASE_URL` already points at `numismatist_dev`. Run `pnpm --filter @numismatist/db migrate:dev` to apply migrations.
+Then copy `.env.example` to `.env` at the repo root, inside `packages/db/`, and inside `apps/web/` — Prisma's CLI only reads `.env` from the package containing `schema.prisma`, and Next.js only reads `.env` from the app directory. The default `DATABASE_URL` already points at `numismatist_dev`. Run `pnpm --filter @numismatist/db migrate:dev` to apply migrations.
 
 `brew services list` shows whether Postgres is running; `brew services stop postgresql@17` stops it. Schema is managed entirely through Prisma migrations — never hand-edit the local DB schema. CI does not use Homebrew Postgres; it spins up a disposable `postgres:17` service container per run (see `ci.yml`).

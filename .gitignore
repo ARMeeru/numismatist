@@ -30,6 +30,11 @@ yarn-error.log*
 # Test / coverage
 coverage/
 
+# Next.js
+next-env.d.ts
+*.tsbuildinfo
+.vercel
+
 # Local uploads / scratch
 uploads/
 tmp/

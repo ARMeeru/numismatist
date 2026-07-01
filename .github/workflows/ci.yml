@@ -58,6 +58,44 @@ jobs:
       - name: Apply database migrations
         run: pnpm --filter @numismatist/db exec prisma migrate deploy
 
+      - name: Build
+        run: pnpm build
+
+      - name: Smoke test web app boots and health check responds
+        working-directory: apps/web
+        run: |
+          # Server output goes to a log file, not step stdout: killing it below
+          # logs pnpm's own "Command failed" notice, which is expected (SIGTERM)
+          # and would otherwise look like a false failure in the CI log.
+          pnpm start > /tmp/server.log 2>&1 &
+          SERVER_PID=$!
+
+          success=false
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/health -o /tmp/health.json; then
+              success=true
+              break
+            fi
+            sleep 1
+          done
+
+          kill "$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+
+          if [ "$success" != "true" ]; then
+            echo "::error::Web app did not become healthy within 30s"
+            cat /tmp/server.log
+            exit 1
+          fi
+
+          echo "--- health response ---"
+          cat /tmp/health.json
+          health_status=$(jq -r '.status' /tmp/health.json)
+          if [ "$health_status" != "ok" ]; then
+            echo "::error::Health check did not return ok status"
+            exit 1
+          fi
+
       - name: Test
         run: pnpm test
 
