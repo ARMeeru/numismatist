@@ -4,10 +4,18 @@
 // values are kept in sync by hand with packages/contracts (Zod schemas don't
 // generate Prisma enums, and vice versa) — when one changes, change both.
 //
-// Auth fields on User (passwordHash, authProvider, providerId) are the §36.1
-// shape as specified in the PRD. When Better Auth is wired in (a later PR),
-// its Prisma adapter may want its own Account/Session/Verification models —
-// expect to reconcile this shape with that adapter at that time.
+// Auth (User, Session, Account, Verification) follows Better Auth's canonical
+// Prisma adapter shape (verified via `@better-auth/cli generate`), not a
+// hand-rolled one. Notably: password + OAuth credentials live on `Account`
+// (one User can have multiple linked Accounts, one per auth method), not on
+// `User` directly, and `Verification` is a generic token store Better Auth
+// manages itself for both email verification and password reset — this
+// replaces the EmailVerificationToken/PasswordResetToken tables originally
+// sketched in PRD §36.1. Field names `name`/`image`/`emailVerified` are Better
+// Auth's canonical names for what the PRD calls "display name"/"profile
+// image"/"email verified"(§11.1) — same fields, renamed to avoid fighting the
+// library's field-mapping. `lastLoginAt` was dropped: no feature reads it, and
+// Session.createdAt already proxies "most recent login" if ever needed.
 
 generator client {
   provider = "prisma-client-js"
@@ -48,12 +56,6 @@ enum DatePrecision {
   unknown
 }
 
-// §36.1: password accounts vs. provider-verified OAuth accounts.
-enum AuthProvider {
-  password
-  google
-}
-
 // §11.11 / §12.12: shared by ContentReport.targetType and SlugRedirect.contentType.
 enum ContentKind {
   profile
@@ -70,25 +72,21 @@ enum ReportStatus {
 }
 
 // ---------------------------------------------------------------------------
-// User (§11.1, §36.1, §36.4)
+// User & auth (§11.1, §36.1) — Better Auth's canonical shape (User, Session,
+// Account, Verification). See file header for the reconciliation notes.
 // ---------------------------------------------------------------------------
 
 model User {
-  id     String @id @default(cuid())
-  email  String @unique
-  emailVerifiedAt DateTime?
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified Boolean   @default(false)
 
-  // §36.1 auth fields. passwordHash is null for OAuth-only accounts.
-  passwordHash String?
-  authProvider AuthProvider @default(password)
-  providerId   String?
-  lastLoginAt  DateTime?
+  name  String
+  image String?
 
-  displayName String
-  username    String  @unique
-  bio         String?
+  username      String  @unique
+  bio           String?
   broadLocation String?
-  profileImage  String?
   publicProfileEnabled Boolean @default(true)
 
   // §36.4: soft-delete grace window before hard purge.
@@ -97,41 +95,70 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  coins                  Coin[]
-  collections            Collection[]
-  emailVerificationTokens EmailVerificationToken[]
-  passwordResetTokens     PasswordResetToken[]
-  contentReports          ContentReport[]
-  slugRedirects           SlugRedirect[]
+  sessions Session[]
+  accounts Account[]
+
+  coins          Coin[]
+  collections    Collection[]
+  contentReports ContentReport[]
+  slugRedirects  SlugRedirect[]
 
   @@index([deletedAt])
 }
 
-// §36.1 supporting token store: email verification.
-model EmailVerificationToken {
-  id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash  String   @unique
-  email      String
-  expiresAt  DateTime
-  consumedAt DateTime?
-  createdAt  DateTime @default(now())
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
 }
 
-// §36.1 supporting token store: password reset.
-model PasswordResetToken {
-  id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash  String   @unique
-  expiresAt  DateTime
-  consumedAt DateTime?
-  createdAt  DateTime @default(now())
+// One row per linked auth method (email+password credential, Google OAuth,
+// future providers) — a User may have several. Password hash lives here
+// (Account.password), on the "credential" provider's row, not on User.
+model Account {
+  id         String @id @default(cuid())
+  accountId  String
+  providerId String
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
+}
+
+// Generic token store Better Auth manages itself: email verification,
+// password reset, and similar single-use tokens.
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([identifier])
 }
 
 // ---------------------------------------------------------------------------

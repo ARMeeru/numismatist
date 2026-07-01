@@ -12,7 +12,7 @@ Numismatist.app — a museum-style digital coin archive and showcase. Collectors
 - **Monorepo:** pnpm workspaces + Turborepo.
 - **App:** Next.js 16 (App Router, React 19), Tailwind CSS v4 — SSR public site **and** API route handlers in one app (`apps/web`). See [apps/web/AGENTS.md](apps/web/AGENTS.md) for Next.js-specific guidance.
 - **DB:** PostgreSQL via **Prisma**.
-- **Auth:** Better Auth (email+password + email verification gate + Google OAuth + password reset).
+- **Auth:** Better Auth (email+password + email verification gate + Google OAuth + password reset). Schema follows Better Auth's canonical Prisma shape (`User`/`Session`/`Account`/`Verification`), not a hand-rolled one — see `packages/db/prisma/schema.prisma` header and `apps/web/src/lib/auth.ts` for the reconciliation notes (password lives on `Account`, not `User`; `Verification` replaces the originally-sketched §36.1 token tables).
 - **Note on versions:** pin to the latest stable of the **previous** major (e.g. Prisma 6.x, not 7.x) when a tool's newest major just shipped and isn't yet well-represented in training data/docs, or when the ecosystem hasn't caught up yet — e.g. ESLint is pinned to 9.x here because `eslint-plugin-react` (pulled in via `eslint-config-next`) doesn't yet support ESLint 10's rule-context API. Check before bumping; don't silently float to a brand-new major.
 - **Images:** `sharp` (libvips) in a separate worker (`apps/image-service`); EXIF/GPS stripping, resize, thumbnails, HEIC conversion.
 - **Storage:** Cloudflare R2 (S3-compatible). **Search:** Postgres FTS + `pg_trgm`.
@@ -43,6 +43,8 @@ infra/         Deploy config
 Shared domain types and validation — visibility enum, coin image types, the year/date model (§36.2), validation constraints, publish-gate rules — live **once** in `packages/contracts` as Zod schemas with inferred TS types. The Next app and the image worker import from there. Never redefine these shapes locally or let them drift.
 
 `packages/db` holds the Prisma schema and is the source of truth for persisted shape. Its enums (`Visibility`, `CoinImageType`, `DatePrecision`, ...) are kept in sync **by hand** with the matching `packages/contracts` Zod enums — Prisma can't import TS values into `schema.prisma`. When you change one, change both, and say so in the PR.
+
+The §8.6 email-verification gate (unverified users may save private content but not publish/share) is `canUserShare()` in `packages/contracts/src/publish.ts`. It's deliberately separate from Better Auth's own `requireEmailVerification` flag, which blocks sign-in entirely — call `canUserShare({ emailVerified: user.emailVerified })` before allowing any coin/collection visibility to become `unlisted` or `public`; don't reimplement the check inline.
 
 ## Workflow and conventions
 
@@ -104,3 +106,9 @@ psql -d numismatist_dev -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'
 Then copy `.env.example` to `.env` at the repo root, inside `packages/db/`, and inside `apps/web/` — Prisma's CLI only reads `.env` from the package containing `schema.prisma`, and Next.js only reads `.env` from the app directory. The default `DATABASE_URL` already points at `numismatist_dev`. Run `pnpm --filter @numismatist/db migrate:dev` to apply migrations.
 
 `brew services list` shows whether Postgres is running; `brew services stop postgresql@17` stops it. Schema is managed entirely through Prisma migrations — never hand-edit the local DB schema. CI does not use Homebrew Postgres; it spins up a disposable `postgres:17` service container per run (see `ci.yml`).
+
+## Local dev server can use any port — no coordination needed
+
+Local dev machines often have common ports (3000, etc.) already taken by other tools, so don't fight for one fixed port. `.claude/launch.json` uses `"autoPort": true`, and the Next.js dev server itself auto-picks another port if its default is busy.
+
+This works with Better Auth's origin check (which normally requires `baseURL` to exactly match the running port — a mismatch fails with a generic, non-obvious **"Invalid origin"** error) because `apps/web/src/lib/auth.ts` gives `baseURL` a dynamic-host config in non-production environments: `{ allowedHosts: ["localhost:*", "127.0.0.1:*"], protocol: "http" }`. Better Auth derives the origin from the incoming request and accepts any matching host, so no port needs to be pinned or coordinated with `.env`. Production keeps a fixed real `baseURL` from `BETTER_AUTH_URL` — no wildcard there. Don't remove this dynamic-host branch or reintroduce a fixed local `baseURL`; it's what makes arbitrary local ports work.

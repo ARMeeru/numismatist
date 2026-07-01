@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkCoinPublishable, checkCollectionPublishable } from "./publish";
+import { canUserShare, checkCoinPublishable, checkCollectionPublishable } from "./publish";
 
 describe("checkCoinPublishable", () => {
   it("passes with title, an image, and a country", () => {
@@ -55,5 +55,15 @@ describe("checkCollectionPublishable", () => {
       checkCollectionPublishable({ title: "Empty", publicCoinCount: 0, hasCoverImage: false })
         .missing,
     ).toEqual(["publicCoin", "coverImage"]);
+  });
+});
+
+describe("canUserShare", () => {
+  it("allows sharing once the user's email is verified", () => {
+    expect(canUserShare({ emailVerified: true })).toBe(true);
+  });
+
+  it("blocks sharing while the user's email is unverified (§8.6)", () => {
+    expect(canUserShare({ emailVerified: false })).toBe(false);
   });
 });
