@@ -64,7 +64,10 @@ jobs:
       - name: Smoke test web app boots and health check responds
         working-directory: apps/web
         run: |
-          pnpm start &
+          # Server output goes to a log file, not step stdout: killing it below
+          # logs pnpm's own "Command failed" notice, which is expected (SIGTERM)
+          # and would otherwise look like a false failure in the CI log.
+          pnpm start > /tmp/server.log 2>&1 &
           SERVER_PID=$!
 
           success=false
@@ -77,9 +80,11 @@ jobs:
           done
 
           kill "$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
 
           if [ "$success" != "true" ]; then
             echo "::error::Web app did not become healthy within 30s"
+            cat /tmp/server.log
             exit 1
           fi
 
