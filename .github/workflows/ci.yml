@@ -98,7 +98,11 @@ jobs:
             --arg commit_message "$COMMIT_MESSAGE" \
             '{repository: $repository, workflow: $workflow, conclusion: $conclusion, branch: $branch, actor: $actor, run_url: $run_url, commit_message: $commit_message}')
 
-          curl -s --max-time 10 -X POST "$NOTIFY_FUNCTION_URL" \
+          http_status=$(curl -s --max-time 10 -o /tmp/notify_response.json -w '%{http_code}' -X POST "$NOTIFY_FUNCTION_URL" \
             -H "Content-Type: application/json" \
             -H "X-Signal: $NOTIFY_SECRET" \
-            -d "$payload"
+            -d "$payload")
+
+          if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
+            echo "::warning::Discord notify failed with HTTP $http_status: $(cat /tmp/notify_response.json)"
+          fi
