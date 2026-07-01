@@ -12,10 +12,25 @@ concurrency:
 
 env:
   TURBO_TELEMETRY_DISABLED: 1
+  DATABASE_URL: postgresql://numismatist:numismatist_ci@localhost:5432/numismatist_ci
 
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: numismatist
+          POSTGRES_PASSWORD: numismatist_ci
+          POSTGRES_DB: numismatist_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -40,5 +55,50 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Apply database migrations
+        run: pnpm --filter @numismatist/db exec prisma migrate deploy
+
       - name: Test
         run: pnpm test
+
+  notify:
+    needs: verify
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Notify Discord via Lambda
+        env:
+          NOTIFY_FUNCTION_URL: ${{ secrets.NOTIFY_FUNCTION_URL }}
+          NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW: ${{ github.workflow }}
+          CONCLUSION: ${{ needs.verify.result }}
+          BRANCH: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        # Values above are passed via `env:` (real environment variables) rather
+        # than interpolated into this script, and the JSON body is built with
+        # `jq --arg` rather than string-templated. Both are load-bearing:
+        # `github.event.head_commit.message` is attacker-controlled (settable via
+        # a PR title that becomes the squash-merge commit message), and directly
+        # substituting `${{ }}` into a `run:` block is a documented GitHub
+        # Actions script-injection vector. This also fixes a correctness bug —
+        # commit messages can be multi-line, which breaks a hand-built JSON string.
+        run: |
+          payload=$(jq -n \
+            --arg repository "$REPOSITORY" \
+            --arg workflow "$WORKFLOW" \
+            --arg conclusion "$CONCLUSION" \
+            --arg branch "$BRANCH" \
+            --arg actor "$ACTOR" \
+            --arg run_url "$RUN_URL" \
+            --arg commit_message "$COMMIT_MESSAGE" \
+            '{repository: $repository, workflow: $workflow, conclusion: $conclusion, branch: $branch, actor: $actor, run_url: $run_url, commit_message: $commit_message}')
+
+          curl -s --max-time 10 -X POST "$NOTIFY_FUNCTION_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-Signal: $NOTIFY_SECRET" \
+            -d "$payload"
