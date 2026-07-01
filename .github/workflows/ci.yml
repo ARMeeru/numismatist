@@ -68,10 +68,9 @@ jobs:
     timeout-minutes: 2
     permissions: {}
     steps:
-      - name: Notify Discord via Lambda
+      - name: Notify Discord
         env:
-          NOTIFY_FUNCTION_URL: ${{ secrets.NOTIFY_FUNCTION_URL }}
-          NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           REPOSITORY: ${{ github.repository }}
           WORKFLOW: ${{ github.workflow }}
           CONCLUSION: ${{ needs.verify.result }}
@@ -79,15 +78,25 @@ jobs:
           ACTOR: ${{ github.actor }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-        # Values above are passed via `env:` (real environment variables) rather
-        # than interpolated into this script, and the JSON body is built with
-        # `jq --arg` rather than string-templated. Both are load-bearing:
-        # `github.event.head_commit.message` is attacker-controlled (settable via
-        # a PR title that becomes the squash-merge commit message), and directly
-        # substituting `${{ }}` into a `run:` block is a documented GitHub
-        # Actions script-injection vector. This also fixes a correctness bug —
-        # commit messages can be multi-line, which breaks a hand-built JSON string.
+        # Posts directly to a Discord webhook (no intermediary Lambda — a prior
+        # AWS Lambda Function URL in this path had a platform-side auth bug:
+        # control plane reported AuthType=NONE with a correct resource policy,
+        # but the Function URL front door still rejected every anonymous call
+        # before it reached the function, reproduced on two separate URLs and
+        # unchanged after a 2-hour wait). Values above are passed via `env:`
+        # (real environment variables) rather than interpolated into this
+        # script, and the JSON body is built with `jq --arg` rather than
+        # string-templated. Both are load-bearing: `github.event.head_commit.message`
+        # is attacker-controlled (settable via a PR title that becomes the
+        # squash-merge commit message), and directly substituting `${{ }}` into
+        # a `run:` block is a documented GitHub Actions script-injection vector.
+        # This also fixes a correctness bug — commit messages can be multi-line,
+        # which breaks a hand-built JSON string.
         run: |
+          color=9807270
+          if [ "$CONCLUSION" = "success" ]; then color=3066993; fi
+          if [ "$CONCLUSION" = "failure" ]; then color=15158332; fi
+
           payload=$(jq -n \
             --arg repository "$REPOSITORY" \
             --arg workflow "$WORKFLOW" \
@@ -96,11 +105,22 @@ jobs:
             --arg actor "$ACTOR" \
             --arg run_url "$RUN_URL" \
             --arg commit_message "$COMMIT_MESSAGE" \
-            '{repository: $repository, workflow: $workflow, conclusion: $conclusion, branch: $branch, actor: $actor, run_url: $run_url, commit_message: $commit_message}')
+            --argjson color "$color" \
+            '{embeds: [{
+              title: ($workflow + ": " + $conclusion),
+              url: $run_url,
+              color: $color,
+              description: $commit_message,
+              fields: [
+                {name: "Repository", value: $repository, inline: true},
+                {name: "Branch", value: $branch, inline: true},
+                {name: "Actor", value: $actor, inline: true}
+              ]
+            }]}')
 
-          http_status=$(curl -s --max-time 10 -o /tmp/notify_response.json -w '%{http_code}' -X POST "$NOTIFY_FUNCTION_URL" \
+          http_status=$(curl -s --max-time 10 -o /tmp/notify_response.json -w '%{http_code}' \
+            -X POST "${DISCORD_WEBHOOK_URL}?wait=true" \
             -H "Content-Type: application/json" \
-            -H "X-Signal: $NOTIFY_SECRET" \
             -d "$payload")
 
           if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
